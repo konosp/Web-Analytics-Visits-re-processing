@@ -4,6 +4,7 @@ import argparse
 import csv
 import logging
 import sys
+import pdb
 
 import apache_beam as beam
 from apache_beam.metrics.metric import Metrics
@@ -24,19 +25,21 @@ def run(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--input',
                         dest='input',
-                        default='gs://feeddata-test-konos-1/tmp/encoded*',
+                        default='data/sample.tsv',
+                        #default='gs://feeddata-test-konos-1/tmp/encoded*',
                         help='Input file to process.')
     parser.add_argument('--output',
                         dest='output',
                         # CHANGE 1/5: The Google Cloud Storage path is required
                         # for outputting the results.
-                        default='gs://feeddata-test-konos-1/visit-analysis/*',
+                        default='data/visits.csv',
+                        #default='gs://feeddata-test-konos-1/visit-analysis/visits.csv',
                         help='Output file to write results to.')
     known_args, pipeline_args = parser.parse_known_args(argv)
     pipeline_args.extend([
         # CHANGE 2/5: (OPTIONAL) Change this to DataflowRunner to
         # run your pipeline on the Google Cloud Dataflow Service.
-        '--runner=DataflowRunner',
+        #'--runner=DataflowRunner',
         # CHANGE 3/5: Your project ID is required in order to run your pipeline on
         # the Google Cloud Dataflow Service.
         '--project=test-r-big-query',
@@ -64,11 +67,15 @@ def run(argv=None):
                 timestamp = columns[0]
                 user_id = columns[1] + '_' + columns[2]
                 products_string = columns[4]
-                events = columns[5]
+                line_number = ''
+                if (not products_string == ''):
+                    line_number = products_string.split(';')[1]
+                
+                # events = columns[5]
                 res = [
                         timestamp,
                         user_id,
-                        #line_number,
+                        line_number,
                         1
                         #'events': events.split(',')
                 ]
@@ -83,6 +90,7 @@ def run(argv=None):
         def process(self, element):
             # Extract the numeric Unix seconds-since-epoch timestamp to be
             # associated with the current log entry.
+            # pdb.set_trace()
             timestamp = element[0]
             if (not timestamp == ''):
                 unix_timestamp = int(element[0])
@@ -91,7 +99,11 @@ def run(argv=None):
                 # TimestampedValue.
                 yield beam.window.TimestampedValue(new_element, unix_timestamp)
 
-    session_timeout_seconds = 2000
+    class reformat_int_csv(beam.DoFn):
+        def process (self, element):
+            return {element[0] + ',' + min(element[1])}
+
+    session_timeout_seconds = int(60 * 30)
 
     with beam.Pipeline(options=pipeline_options) as p:
         data = (
@@ -99,12 +111,11 @@ def run(argv=None):
             | 'Filter' >> beam.ParDo(filter_product_views())
             | 'Add timestamp' >> beam.ParDo(AddTimestampDoFn())
             | 'Re-assess Sessions' >> beam.WindowInto(window.Sessions(session_timeout_seconds))
-            | 'Re-group data' >> beam.CombinePerKey(min)
-            | 'Format CSV' >> beam.ParDo()
+            | 'Combine' >> beam.GroupByKey()
+            | 'Format CSV' >> beam.ParDo(reformat_int_csv())
             )
         data | 'Generate output' >>  WriteToText(known_args.output)
     # [END main]
-
 if __name__ == '__main__':
-  logging.getLogger().setLevel(logging.INFO)
+  # logging.getLogger().setLevel(logging.INFO)
   run()
