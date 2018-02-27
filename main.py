@@ -90,14 +90,21 @@ def run(argv=None):
         def process(self, element):
             # Extract the numeric Unix seconds-since-epoch timestamp to be
             # associated with the current log entry.
-            # pdb.set_trace()
-            timestamp = element[0]
-            if (not timestamp == ''):
-                unix_timestamp = int(element[0])
-                new_element = [element[1], element[0]]
-                # Wrap and emit the current entry and new timestamp in a
-                # TimestampedValue.
-                yield beam.window.TimestampedValue(new_element, unix_timestamp)
+            if (len(element) > 0):
+                timestamp = element.pop(0)
+                user_id = element.pop(0)
+                if (not timestamp == ''):
+                    unix_timestamp = int(timestamp)
+                    # new_element = [element[1], element[0]]
+                    # new_element = [user_id, {
+                    #    'ts' :unix_timestamp, 
+                    #    'data':element}
+                    #    ]
+                    new_element = [user_id, timestamp]
+                    # Wrap and emit the current entry and new timestamp in a
+                    # TimestampedValue.
+                    # pdb.set_trace()
+                    yield beam.window.TimestampedValue(new_element, unix_timestamp)
 
     class reformat_int_csv(beam.DoFn):
         def process (self, element):
