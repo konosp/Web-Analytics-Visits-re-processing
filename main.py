@@ -19,6 +19,58 @@ from apache_beam.io import WriteToText
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import SetupOptions
 
+class extract_data(beam.DoFn):
+
+    def process(self, element):
+        try:
+            columns = element.split('\t')
+            timestamp = columns[0]
+            user_id = columns[1] + '_' + columns[2]
+            products_string = columns[4]
+            line_number = ''
+            if (not products_string == ''):
+                line_number = products_string.split(';')[1]
+            
+            # events = columns[5]
+            res = [
+                    timestamp,
+                    user_id,
+                    line_number,
+                    1
+                    #'events': events.split(',')
+            ]
+            #pdb.set_trace()
+            yield res
+        except:
+            # Do nothing, discard the line
+            print('Error')
+
+class AddTimestampDoFn(beam.DoFn):
+
+    def process(self, element):
+        # Extract the numeric Unix seconds-since-epoch timestamp to be
+        # associated with the current log entry.
+        if (len(element) > 0):
+            timestamp = element.pop(0)
+            user_id = element.pop(0)
+            if (not timestamp == ''):
+                unix_timestamp = int(timestamp)
+                # new_element = [element[1], element[0]]
+                # new_element = [user_id, {
+                #    'ts' :unix_timestamp, 
+                #    'data':element}
+                #    ]
+                new_element = [user_id, timestamp]
+                # Wrap and emit the current entry and new timestamp in a
+                # TimestampedValue.
+                # pdb.set_trace()
+                yield beam.window.TimestampedValue(new_element, unix_timestamp)
+
+class reformat_int_csv(beam.DoFn):
+    def process (self, element):
+        return {element[0] + ',' + min(element[1])}
+
+
 # [START main]
 def run(argv=None):
     """Main entry point; defines and runs the visitor analysis pipeline."""
@@ -35,11 +87,16 @@ def run(argv=None):
                         default='data/visits.csv',
                         #default='gs://feeddata-test-konos-1/visit-analysis/visits.csv',
                         help='Output file to write results to.')
+    parser.add_argument('--runner',
+                        dest='runner',
+                        default='DirectRunner',
+                        help='DirectRunner or DataflowRunner')
+    
     known_args, pipeline_args = parser.parse_known_args(argv)
     pipeline_args.extend([
         # CHANGE 2/5: (OPTIONAL) Change this to DataflowRunner to
         # run your pipeline on the Google Cloud Dataflow Service.
-        #'--runner=DataflowRunner',
+        # '--runner=DataflowRunner',
         # CHANGE 3/5: Your project ID is required in order to run your pipeline on
         # the Google Cloud Dataflow Service.
         '--project=test-r-big-query',
@@ -49,77 +106,26 @@ def run(argv=None):
         # CHANGE 5/5: Your Google Cloud Storage path is required for temporary
         # files.
         '--temp_location=gs://feeddata-test-konos-1/visitor/tmp/',
-        '--job_name=visitoranalysis2',
+        '--job_name=visitoranalysis',
     ])
+
+
 
     # We use the save_main_session option because one or more DoFn's in this
     # workflow rely on global context (e.g., a module imported at module level).
     pipeline_options = PipelineOptions(pipeline_args)
     pipeline_options.view_as(SetupOptions).save_main_session = True
   
-    class filter_product_views(beam.DoFn):
-
-        def process(self, element):
-            try:
-                #row = element.encode('utf-8')
-                #row = element.decode('ISO-8859-1') #.decode('unicode-escape')
-                columns = element.split('\t')
-                timestamp = columns[0]
-                user_id = columns[1] + '_' + columns[2]
-                products_string = columns[4]
-                line_number = ''
-                if (not products_string == ''):
-                    line_number = products_string.split(';')[1]
-                
-                # events = columns[5]
-                res = [
-                        timestamp,
-                        user_id,
-                        line_number,
-                        1
-                        #'events': events.split(',')
-                ]
-                #pdb.set_trace()
-                yield res
-            except:
-                # Do nothing, discard the line
-                print('Error')
-
-    class AddTimestampDoFn(beam.DoFn):
-
-        def process(self, element):
-            # Extract the numeric Unix seconds-since-epoch timestamp to be
-            # associated with the current log entry.
-            if (len(element) > 0):
-                timestamp = element.pop(0)
-                user_id = element.pop(0)
-                if (not timestamp == ''):
-                    unix_timestamp = int(timestamp)
-                    # new_element = [element[1], element[0]]
-                    # new_element = [user_id, {
-                    #    'ts' :unix_timestamp, 
-                    #    'data':element}
-                    #    ]
-                    new_element = [user_id, timestamp]
-                    # Wrap and emit the current entry and new timestamp in a
-                    # TimestampedValue.
-                    # pdb.set_trace()
-                    yield beam.window.TimestampedValue(new_element, unix_timestamp)
-
-    class reformat_int_csv(beam.DoFn):
-        def process (self, element):
-            return {element[0] + ',' + min(element[1])}
-
     session_timeout_seconds = int(60 * 30)
 
     with beam.Pipeline(options=pipeline_options) as p:
         data = (
             p | 'Read data' >> ReadFromText(known_args.input)
-            | 'Filter' >> beam.ParDo(filter_product_views())
+            | 'Filter & Extract data' >> beam.ParDo(extract_data())
             | 'Add timestamp' >> beam.ParDo(AddTimestampDoFn())
-            | 'Re-assess Sessions' >> beam.WindowInto(window.Sessions(session_timeout_seconds))
-            | 'Combine' >> beam.GroupByKey()
-            | 'Format CSV' >> beam.ParDo(reformat_int_csv())
+            | 'Re-assess Sessions: ' + str(session_timeout_seconds) + ' seconds timeout' >> beam.WindowInto(window.Sessions(session_timeout_seconds))
+            | 'Group data' >> beam.GroupByKey()
+            | 'Prepare final format' >> beam.ParDo(reformat_int_csv())
             )
         data | 'Generate output' >>  WriteToText(known_args.output)
     # [END main]
