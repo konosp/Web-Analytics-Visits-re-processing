@@ -68,7 +68,7 @@ class AddTimestampDoFn(beam.DoFn):
 
 class reformat_int_csv(beam.DoFn):
     def process (self, element):
-        return {element[0] + ',' + min(element[1])}
+        return {element[0] + ',' + min(element[1])+ ',' + max(element[1])}
 
 
 # [START main]
@@ -89,14 +89,14 @@ def run(argv=None):
                         help='Output file to write results to.')
     parser.add_argument('--runner',
                         dest='runner',
-                        default='DirectRunner',
+                        default='DataflowRunner',
                         help='DirectRunner or DataflowRunner')
     
     known_args, pipeline_args = parser.parse_known_args(argv)
     pipeline_args.extend([
         # CHANGE 2/5: (OPTIONAL) Change this to DataflowRunner to
         # run your pipeline on the Google Cloud Dataflow Service.
-        # '--runner=DataflowRunner',
+        '--runner=DataflowRunner',
         # CHANGE 3/5: Your project ID is required in order to run your pipeline on
         # the Google Cloud Dataflow Service.
         '--project=test-r-big-query',
@@ -130,5 +130,5 @@ def run(argv=None):
         data | 'Generate output' >>  WriteToText(known_args.output)
     # [END main]
 if __name__ == '__main__':
-  # logging.getLogger().setLevel(logging.INFO)
+  logging.getLogger().setLevel(logging.INFO)
   run()
