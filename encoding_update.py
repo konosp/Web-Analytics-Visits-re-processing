@@ -10,7 +10,7 @@ files = os.listdir(initial_path)
 blocksize = 1 << 16     #64kB
 
 for file in files:
-    if file.find('.gz') > 0:
+    if file.find('tsv.gz') > 0:
         try:
             outfilename = '/'.join([final_path,'encoded-'+file])
             if not os.path.isdir(final_path):
