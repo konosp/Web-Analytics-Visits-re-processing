@@ -33,21 +33,24 @@ class extract_data(beam.DoFn):
             'payment' : '204'
         }
         # Boolean outcome encoded in 0/1 so it can be summed up later on
-        outcome = 0
+        outcome = '0'
         if event_type in events_mapping:
             for event in events:
                 if event == events_mapping[event_type]:
-                    outcome = 1
+                    outcome = '1'
 
         return outcome
 
     def process(self, element):
-        #try:
+        try:
             columns = element.split('\t')
             timestamp = columns[0]
             user_id = columns[1] + '_' + columns[2]
+            tracking_code = columns[3]
             products_string = columns[4]
+            page = columns[6]
             site_server = columns[7]
+            ibm_id = str(element[8])
             line_number = ''
             if (not products_string == ''):
                 line_number = products_string.split(';')[1]
@@ -57,6 +60,7 @@ class extract_data(beam.DoFn):
             res = {
                     'ts' : timestamp,
                     'user_id' : user_id,
+                    'tracking_code' : tracking_code,
                     'line_number' : line_number,
                     'pdp_view': self.event_type(events_list,'pdp_view'),
                     'order' : self.event_type(events_list,'order'),
@@ -64,12 +68,13 @@ class extract_data(beam.DoFn):
                     'atb' : self.event_type(events_list, 'atb'),
                     'checkout' : self.event_type(events_list, 'checkout'),
                     'payment' : self.event_type(events_list, 'payment'),
-                    'server' : site_server
+                    'server' : site_server,
+                    'page' : page
             }
             yield res
-        #except:
-        #    # Do nothing, discard the line
-        #    print 'Error'
+        except:
+            # Do nothing, discard the line
+            print 'Error'
 
 class AddTimestampDoFn(beam.DoFn):
 
@@ -94,7 +99,8 @@ class reformat_into_csv_visits(beam.DoFn):
 
 class reformat_into_csv_hits(beam.DoFn):
     def process (self, element):
-        output = element
+        output = element['visit_key'] + ',' + element['ts'] + ',' +  element['server'] + ',' +  element['tracking_code'] + ',' + element['page'] + ',' + element['line_number'] + ',' + element['pdp_view'] + ',' +  element['atb'] + ',' + element['bag_view'] + ',' + element['checkout'] + ',' + element['payment'] + ',' + element['order']
+        # output = element
         yield output
 
 class calc_timestamps_group_hits_by_visit(beam.DoFn):
@@ -142,15 +148,16 @@ def run(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--input',
                         dest='input',
-                        default='data/encoded_feeds/*',
-                        #default='gs://feeddata-test-konos-1/tmp/encoded*',
+                        # default='data/encoded_feeds/*',
+                        # default='data/sample.tsv',
+                        default='gs://visit-analysis/raw-data/encoded_feeds/*',
                         help='Input file to process.')
     parser.add_argument('--output',
                         dest='output',
                         # CHANGE 1/5: The Google Cloud Storage path is required
                         # for outputting the results.
-                        default='data',
-                        #default='gs://feeddata-test-konos-1/visit-analysis/visits.csv',
+                        # default='data/',
+                        default='gs://visit-analysis/new-visits/',
                         help='Output path to write results to.')
     parser.add_argument('--runner',
                         dest='runner',
@@ -161,7 +168,7 @@ def run(argv=None):
     pipeline_args.extend([
         # CHANGE 2/5: (OPTIONAL) Change this to DataflowRunner to
         # run your pipeline on the Google Cloud Dataflow Service.
-        # '--runner=DataflowRunner',
+        '--runner=DataflowRunner',
         # CHANGE 3/5: Your project ID is required in order to run your pipeline on
         # the Google Cloud Dataflow Service.
         '--project=test-r-big-query',
@@ -197,8 +204,8 @@ def run(argv=None):
         hit_data = hit_data | 'Split hits in multiple lines' >> beam.ParDo(split_hits_into_lines())
         visit_data = visit_data | 'Prepare final format - Visits' >> beam.ParDo(reformat_into_csv_visits())
         hit_data = hit_data | 'Prepare final format - Hits' >> beam.ParDo(reformat_into_csv_hits())
-        visit_data | 'Generate output - Visits' >>  WriteToText(known_args.output + '/visits.csv')
-        hit_data | 'Generate output - Hits' >>  WriteToText(known_args.output + '/hits.csv')
+        visit_data | 'Generate output - Visits' >>  WriteToText(known_args.output + 'visits/visits.csv')
+        hit_data | 'Generate output - Hits' >>  WriteToText(known_args.output + 'hits/hits.csv')
     # [END main]
 if __name__ == '__main__':
   logging.getLogger().setLevel(logging.INFO)
