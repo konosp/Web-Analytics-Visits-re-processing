@@ -5,3 +5,5 @@ pip-selfcheck.json
 include
 .Python
 *.pyc
+tcl/
+Scripts/

@@ -74,7 +74,8 @@ class extract_data(beam.DoFn):
             yield res
         except:
             # Do nothing, discard the line
-            print 'Error'
+            # TODO: Add error tracking through Stackdriver
+            print('Error')
 
 class AddTimestampDoFn(beam.DoFn):
 
@@ -148,27 +149,27 @@ def run(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--input',
                         dest='input',
-                        # default='data/encoded_feeds/*',
-                        # default='data/sample.tsv',
-                        default='gs://visit-analysis/raw-data/encoded_feeds/*',
+                        default='data/sample.tsv',
+                        # default='gs://visit-analysis/raw-data/encoded_feeds/*',
                         help='Input file to process.')
     parser.add_argument('--output',
                         dest='output',
                         # CHANGE 1/5: The Google Cloud Storage path is required
                         # for outputting the results.
-                        # default='data/',
-                        default='gs://visit-analysis/new-visits/',
+                        default='data/output/',
+                        # default='gs://visit-analysis/new-visits/',
                         help='Output path to write results to.')
     parser.add_argument('--runner',
                         dest='runner',
                         default='DataflowRunner',
+                        required='True',
                         help='DirectRunner or DataflowRunner')
     
     known_args, pipeline_args = parser.parse_known_args(argv)
     pipeline_args.extend([
         # CHANGE 2/5: (OPTIONAL) Change this to DataflowRunner to
         # run your pipeline on the Google Cloud Dataflow Service.
-        '--runner=DataflowRunner',
+        '--runner=' + known_args.runner,
         # CHANGE 3/5: Your project ID is required in order to run your pipeline on
         # the Google Cloud Dataflow Service.
         '--project=test-r-big-query',
@@ -178,29 +179,26 @@ def run(argv=None):
         # CHANGE 5/5: Your Google Cloud Storage path is required for temporary
         # files.
         '--temp_location=gs://feeddata-test-konos-1/visitor/tmp/',
-        '--job_name=visitoranalysis',
+        '--job_name=visitor_analysis',
     ])
-
-    # We use the save_main_session option because one or more DoFn's in this
-    # workflow rely on global context (e.g., a module imported at module level).
+    
     pipeline_options = PipelineOptions(pipeline_args)
     pipeline_options.view_as(SetupOptions).save_main_session = True
-  
     session_timeout_seconds = int(60 * 30)
 
     with beam.Pipeline(options=pipeline_options) as p:
-        data = (
-            p | 'Read data' >> ReadFromText(known_args.input)
+        data = (p | 'Read data' >> ReadFromText(known_args.input)
             | 'Filter & Extract data' >> beam.ParDo(extract_data())
             | 'Add timestamp' >> beam.ParDo(AddTimestampDoFn())
             | 'Re-assess Sessions: ' + str(session_timeout_seconds) + ' seconds timeout' >> beam.WindowInto(window.Sessions(session_timeout_seconds))
             | 'Group data' >> beam.GroupByKey()
-            )
-        data = data | 'Calculate visit timestamps' >> beam.ParDo(calc_timestamps_group_hits_by_visit())
-        hit_data = data
+            | 'Calculate visit timestamps' >> beam.ParDo(calc_timestamps_group_hits_by_visit()))
+        # Duplicate formated data into two streams for separate additional processing
+        hit_data = data 
         visit_data = data
-        visit_data = visit_data | beam.ParDo(extract_visit_data())
-        hit_data = hit_data | beam.ParDo(extract_hit_data())
+        # Start processing for hits/visits
+        visit_data = visit_data | 'Extract Visit-related information' >> beam.ParDo(extract_visit_data())
+        hit_data = hit_data | 'Extract Hit-related information' >> beam.ParDo(extract_hit_data())
         hit_data = hit_data | 'Split hits in multiple lines' >> beam.ParDo(split_hits_into_lines())
         visit_data = visit_data | 'Prepare final format - Visits' >> beam.ParDo(reformat_into_csv_visits())
         hit_data = hit_data | 'Prepare final format - Hits' >> beam.ParDo(reformat_into_csv_hits())
@@ -209,4 +207,5 @@ def run(argv=None):
     # [END main]
 if __name__ == '__main__':
   logging.getLogger().setLevel(logging.INFO)
+  # Run Forest, run!
   run()
