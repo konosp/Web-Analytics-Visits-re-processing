@@ -108,9 +108,7 @@ class reformat_into_csv_hits(beam.DoFn):
 
 class reformat_into_csv_visitors(beam.DoFn):
     def process (self, element):
-        #pdb.set_trace()
-        output = element['user_id'] + ',' + element['ibm_id'] + ',' + element['scv_id']
-        yield output
+        yield element
 
 class calc_timestamps_group_hits_by_visit(beam.DoFn):
     def process (self, element):
@@ -149,28 +147,16 @@ class calc_timestamps_group_hits_by_visit(beam.DoFn):
 
 class extract_visit_data(beam.DoFn):
     def process (self, element):
-        ## visit_only_values = {}
         visit_only_values = element['visit_data']
-        #for item in element:
-        #    if item != 'hits':
-        #        visit_only_values[item] = element[item]
         yield visit_only_values
 
 class extract_hit_data(beam.DoFn):
     def process (self, element):
-        #pdb.set_trace()
         yield element['hit_data']
 
 class extract_visitor_data(beam.DoFn):
     def process (self, element):
-        # pdb.set_trace()
-        # visitor_only_values = {}
         visitor_only_values = element['user_id'] + ',' + element['ibm_id'] + ',' + element['scv_id']
-        #ibm_id = element['hits'][0]['ibm_id']
-        #scv_id = element['hits'][0]['scv_id']
-        #visitor_only_values['user_id'] = element['user_id']
-        #visitor_only_values['ibm_id'] = ibm_id
-        #visitor_only_values['scv_id'] = scv_id
         yield visitor_only_values
 
 class split_hits_into_lines(beam.DoFn):
@@ -234,12 +220,10 @@ def run(argv=None):
         # Duplicate formated data into two streams for separate additional processing
         hit_data = data 
         visit_data = data
-        # visitor_data = data
         # Start processing for hits/visits
         visit_data = visit_data | 'Extract Visit information' >> beam.ParDo(extract_visit_data())
         hit_data = hit_data | 'Extract Hit information' >> beam.ParDo(extract_hit_data())
-        # visitor_data = visitor_data | 'Extract Visitor information' >> beam.ParDo(extract_visitor_data())
-
+        
         hit_data = hit_data | 'Split hits in multiple lines' >> beam.ParDo(split_hits_into_lines())
         hit_data = hit_data | 'Final format - Hits' >> beam.ParDo(reformat_into_csv_hits())
         hit_data | 'Output - Hits' >>  WriteToText(known_args.output + 'hits/hits.csv')
@@ -247,7 +231,6 @@ def run(argv=None):
         visit_data = visit_data | 'Final format - Visits' >> beam.ParDo(reformat_into_csv_visits())
         visit_data | 'Output - Visits' >>  WriteToText(known_args.output + 'visits/visits.csv')
         
-        # visitor_data = visitor_data | 'Final format - Visitor' >> beam.ParDo(reformat_into_csv_visitors())
         visitor_data | 'Output - Visitors' >>  WriteToText(known_args.output + 'visitors/visitors.csv')
 
     # [END main]
