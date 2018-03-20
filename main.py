@@ -50,7 +50,8 @@ class extract_data(beam.DoFn):
             products_string = columns[4]
             page = columns[6]
             site_server = columns[7]
-            ibm_id = str(element[8])
+            ibm_id = str(columns[8])
+            scv_id = str(columns[9])
             line_number = ''
             if (not products_string == ''):
                 line_number = products_string.split(';')[1]
@@ -60,6 +61,8 @@ class extract_data(beam.DoFn):
             res = {
                     'ts' : timestamp,
                     'user_id' : user_id,
+                    'ibm_id' : ibm_id,
+                    'scv_id' : scv_id,
                     'tracking_code' : tracking_code,
                     'line_number' : line_number,
                     'pdp_view': self.event_type(events_list,'pdp_view'),
@@ -101,8 +104,11 @@ class reformat_into_csv_visits(beam.DoFn):
 class reformat_into_csv_hits(beam.DoFn):
     def process (self, element):
         output = element['visit_key'] + ',' + element['ts'] + ',' +  element['server'] + ',' +  element['tracking_code'] + ',' + element['page'] + ',' + element['line_number'] + ',' + element['pdp_view'] + ',' +  element['atb'] + ',' + element['bag_view'] + ',' + element['checkout'] + ',' + element['payment'] + ',' + element['order']
-        # output = element
         yield output
+
+class reformat_into_csv_visitors(beam.DoFn):
+    def process (self, element):
+        yield element
 
 class calc_timestamps_group_hits_by_visit(beam.DoFn):
     def process (self, element):
@@ -114,30 +120,44 @@ class calc_timestamps_group_hits_by_visit(beam.DoFn):
         visit_start = min(timestamps)
         visit_end = max(timestamps)
         visit_key = str(user_id) + '_' + str(visit_start)
-        #hits['visit_key'] = visit_key
+
         for hit in hits:
             hit['visit_key'] = visit_key
-        data = {
+
+        visit_data = {
             'user_id' : user_id,
             'visit_key' : visit_key,
             'visit_start' : visit_start,
-            'visit_end' : visit_end,
-            'hits' : hits
+            'visit_end' : visit_end
         }
+
+        visitor_data = {
+            'user_id' : user_id,
+            'ibm_id' : '',
+            'scv_id' : ''
+        }
+
+        data = {
+            'visit_data': visit_data,
+            'visitor_data': visitor_data,
+            'hit_data': hits
+        }
+        #pdb.set_trace()
         yield data
 
 class extract_visit_data(beam.DoFn):
     def process (self, element):
-        visit_only_values = {}
-        for item in element:
-            if item != 'hits':
-                visit_only_values[item] = element[item]
+        visit_only_values = element['visit_data']
         yield visit_only_values
 
 class extract_hit_data(beam.DoFn):
     def process (self, element):
-        #pdb.set_trace()
-        yield element['hits']
+        yield element['hit_data']
+
+class extract_visitor_data(beam.DoFn):
+    def process (self, element):
+        visitor_only_values = element['user_id'] + ',' + element['ibm_id'] + ',' + element['scv_id']
+        yield visitor_only_values
 
 class split_hits_into_lines(beam.DoFn):
     def process (self, element):
@@ -187,9 +207,13 @@ def run(argv=None):
     session_timeout_seconds = int(60 * 30)
 
     with beam.Pipeline(options=pipeline_options) as p:
+        # Initial pipeline - Common processing for all exports
         data = (p | 'Read data' >> ReadFromText(known_args.input)
-            | 'Filter & Extract data' >> beam.ParDo(extract_data())
-            | 'Add timestamp' >> beam.ParDo(AddTimestampDoFn())
+            | 'Filter & Extract data' >> beam.ParDo(extract_data()))
+        
+        visitor_data = data | 'Extract Visitor information' >> beam.ParDo(extract_visitor_data())
+        
+        data = (data | 'Add timestamp' >> beam.ParDo(AddTimestampDoFn())
             | 'Re-assess Sessions: ' + str(session_timeout_seconds) + ' seconds timeout' >> beam.WindowInto(window.Sessions(session_timeout_seconds))
             | 'Group data' >> beam.GroupByKey()
             | 'Calculate visit timestamps' >> beam.ParDo(calc_timestamps_group_hits_by_visit()))
@@ -197,13 +221,18 @@ def run(argv=None):
         hit_data = data 
         visit_data = data
         # Start processing for hits/visits
-        visit_data = visit_data | 'Extract Visit-related information' >> beam.ParDo(extract_visit_data())
-        hit_data = hit_data | 'Extract Hit-related information' >> beam.ParDo(extract_hit_data())
+        visit_data = visit_data | 'Extract Visit information' >> beam.ParDo(extract_visit_data())
+        hit_data = hit_data | 'Extract Hit information' >> beam.ParDo(extract_hit_data())
+        
         hit_data = hit_data | 'Split hits in multiple lines' >> beam.ParDo(split_hits_into_lines())
-        visit_data = visit_data | 'Prepare final format - Visits' >> beam.ParDo(reformat_into_csv_visits())
-        hit_data = hit_data | 'Prepare final format - Hits' >> beam.ParDo(reformat_into_csv_hits())
-        visit_data | 'Generate output - Visits' >>  WriteToText(known_args.output + 'visits/visits.csv')
-        hit_data | 'Generate output - Hits' >>  WriteToText(known_args.output + 'hits/hits.csv')
+        hit_data = hit_data | 'Final format - Hits' >> beam.ParDo(reformat_into_csv_hits())
+        hit_data | 'Output - Hits' >>  WriteToText(known_args.output + 'hits/hits.csv')
+
+        visit_data = visit_data | 'Final format - Visits' >> beam.ParDo(reformat_into_csv_visits())
+        visit_data | 'Output - Visits' >>  WriteToText(known_args.output + 'visits/visits.csv')
+        
+        visitor_data | 'Output - Visitors' >>  WriteToText(known_args.output + 'visitors/visitors.csv')
+
     # [END main]
 if __name__ == '__main__':
   logging.getLogger().setLevel(logging.INFO)
