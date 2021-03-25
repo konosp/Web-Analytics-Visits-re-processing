@@ -36,7 +36,7 @@ protobuf==3.5.1
 pyasn1==0.4.2
 pyasn1-modules==0.2.1
 PyVCF==0.6.8
-PyYAML==3.12
+PyYAML==5.4
 requests==2.18.4
 rsa==3.4.2
 six==1.11.0
